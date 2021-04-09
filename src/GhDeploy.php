@@ -50,7 +50,10 @@ class GhDeploy
         rename("$deployPath-temp" . DS . "$repoName-$branch", $deployPath);
         rmdir("$deployPath-temp");
 
-        if ($composerInstall && file_exists($deployPath . DS . 'composer.json')) shell_exec("cd \"$deployPath\" && composer install");
+        if ($composerInstall && file_exists($deployPath . DS . 'composer.json')){
+            shell_exec("cd \"$deployPath\" && composer install");
+            shell_exec("cd \"$deployPath\" && composer update");
+        }
 
         mkdir("$deployPath-bkp");
         if (!$this->moveFolderFiles($projectPath, "$deployPath-bkp", [$deployId, "$deployId-bkp"])) die("Error moving project files to backup");
