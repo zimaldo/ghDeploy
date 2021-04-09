@@ -2,6 +2,7 @@
 
 namespace Zimaldo;
 
+
 if (!defined('DS')) define('DS', DIRECTORY_SEPARATOR);
 
 class GhDeploy
@@ -50,7 +51,7 @@ class GhDeploy
         rename("$deployPath-temp" . DS . "$repoName-$branch", $deployPath);
         rmdir("$deployPath-temp");
 
-        if ($composerInstall && file_exists($deployPath . DS . 'composer.json')){
+        if ($composerInstall && file_exists($deployPath . DS . 'composer.json')) {
             shell_exec("cd \"$deployPath\" && composer install");
             shell_exec("cd \"$deployPath\" && composer update");
         }
