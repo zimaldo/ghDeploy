@@ -1,0 +1,20 @@
+{
+  "name": "zimaldo/gh-deploy",
+  "type": "library",
+  "version": "0.1.7-alpha.1",
+  "require": {
+    "php": "^7.0"
+  },
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Zimaldo Junior",
+      "email": "zimaldojunior@gmail.com"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Zimaldo\\": "src/"
+    }
+  }
+}
