@@ -1,7 +1,7 @@
 {
   "name": "zimaldo/gh-deploy",
   "type": "library",
-  "version": "0.1.7-alpha.1",
+  "version": "0.1.8-alpha.1",
   "require": {
     "php": "^7.0"
   },
