@@ -12,6 +12,9 @@ class GhDeploy
     private $repo;
     private $branch;
     private $token;
+    private $updateOnly;
+    private $runComposer;
+    private $repoName;
 
     /**
      * @param string $projectPath Current project path (to receive the files in specified branch)
@@ -21,38 +24,19 @@ class GhDeploy
         $token = $_GET['token'] ?? NULL;
         if (!$token) die('Auth missing');
 
+        $this->deployId = uniqid('deploy_');
         $this->token = $token;
 
         if (!file_exists($projectPath)) die("Project path '$projectPath' don't exists");
 
         $projectPath = str_replace('/', DS, $projectPath);
         if ($projectPath[strlen($projectPath) - 1] == DS) $projectPath = substr($projectPath, 0, -1);
-
         $this->projectPath = $projectPath;
-
-        $configFile = $projectPath . DS . 'ghConfig.json';
-        if (!file_exists($configFile)) die("Config file ('ghConfig.json'), not found in project path");
-
-
-        $configArr = json_decode(file_get_contents($configFile), true);
-        extract($configArr);
-
-        if (strpos($repo, '://') !== false) die('$repo can\'t be a URL, use "user/repository" instead');
-        if ($repo[0] == '/') $repo = substr($repo, 1);
-        if ($repo[strlen($repo) - 1] == '/') $repo = substr($repo, 0, -1);
-        $x = explode('/', $repo);
-        if (count($x) > 2) die('Unrecognized $repo');
-
-        $this->repo = $repo;
-        $this->branch = $branch;
-
-        $repoName = $x[1];
-
-
-
-        $this->deployId = uniqid('deploy_');
+        $this->setConfigs($projectPath . DS . 'ghConfig.json');
 
         $this->getNewConfig();
+        $this->setConfigs($projectPath . DS . 'ghConfig.json');
+
 
         $zipPath = $projectPath . DS . $this->deployId . '.zip';
         $deployPath = $projectPath . DS . $this->deployId;
@@ -68,18 +52,40 @@ class GhDeploy
         if (!$this->unzip($zipPath, "$deployPath-temp"));
         unlink($zipPath);
 
-        rename("$deployPath-temp" . DS . "$repoName-$branch", $deployPath);
+        rename("$deployPath-temp" . DS . "{$this->repoName}-{$this->branch}", $deployPath);
         rmdir("$deployPath-temp");
 
-        if ($composerInstall && file_exists($deployPath . DS . 'composer.json')) {
-            shell_exec("cd \"$runComposer\" && composer install");
-            shell_exec("cd \"$runComposer\" && composer update");
+        if ($this->runComposer && file_exists($deployPath . DS . 'composer.json')) {
+            shell_exec("cd \"$this->runComposer\" && composer install");
+            shell_exec("cd \"$this->runComposer\" && composer update");
         }
 
-        $result = $updateOnly ? $this->update($projectPath, $this->deployId) : $this->clone($projectPath);
+        $result = $this->updateOnly ? $this->update($projectPath, $this->deployId) : $this->clone($projectPath);
 
 
         die("Success!");
+    }
+
+    private function setConfigs(string $configFile)
+    {
+        if (!file_exists($configFile)) die("Config file ('ghConfig.json'), not found in project path");
+
+
+        $configArr = json_decode(file_get_contents($configFile), true);
+        extract($configArr);
+
+        if (strpos($repo, '://') !== false) die('$repo can\'t be a URL, use "user/repository" instead');
+        if ($repo[0] == '/') $repo = substr($repo, 1);
+        if ($repo[strlen($repo) - 1] == '/') $repo = substr($repo, 0, -1);
+        $x = explode('/', $repo);
+        if (count($x) > 2) die('Unrecognized $repo');
+        $repoName = $x[1];
+
+        $this->repo = $repo;
+        $this->branch = $branch;
+        $this->repoName = $repoName;
+        $this->updateOnly = $updateOnly;
+        $this->runComposer = $runComposer;
     }
 
     private function getNewConfig()
@@ -89,19 +95,30 @@ class GhDeploy
         if (file_exists($configFile)) rename($configFile, $bkpConfigFile);
         $r = $this->request(
             "https://raw.githubusercontent.com/{$this->repo}/{$this->branch}/ghConfig.json",
-            ["Authorization: token {$this->token}"]
+            ["Authorization: token {$this->token}"],
+            NULL,
+            $configFile
         );
         if ($r['code'] >= 400) {
             if (file_exists($bkpConfigFile)) rename($bkpConfigFile, $configFile);
             die("Config file ('ghConfig.json'), not found in github repository");
         }
+
+        if (file_exists($bkpConfigFile)) unlink($bkpConfigFile);
     }
 
     private function clone()
     {
         $deployPath = $this->projectPath . DS . $this->deployId;
         mkdir("$deployPath-bkp");
-        if (!$this->moveFolderFiles($this->projectPath, "$deployPath-bkp", [$this->deployId, "{$this->deployId}-bkp"])) die("Error moving project files to backup");
+        if (!$this->moveFolderFiles(
+            $this->projectPath,
+            "$deployPath-bkp",
+            [
+                $this->projectPath . DS . $this->deployId,
+                $this->projectPath . DS . "{$this->deployId}-bkp"
+            ]
+        )) die("Error moving project files to backup");
         if (!$this->moveFolderFiles($deployPath, $this->projectPath)) die("Error moving deployed files to project");
         rmdir($deployPath);
         return true;
@@ -109,15 +126,69 @@ class GhDeploy
 
     private function update()
     {
+        $deployPath = $this->projectPath . DS . $this->deployId;
+        mkdir("$deployPath-bkp");
+        $replaceLista = $this->recursiveScanDir($deployPath);
+        $lista = [];
+        foreach ($replaceLista as $val) {
+            $lista[] = $this->str_replace_first($deployPath, $this->projectPath, $val);
+        }
+        if (!$this->moveFolderFiles($this->projectPath, "$deployPath-bkp", $lista, true)) die("Error moving project files to backup");
+        if (!$this->moveFolderFiles($deployPath, $this->projectPath)) die("Error moving deployed files to project");
+        rmdir($deployPath);
+        return true;
     }
 
-    private function moveFolderFiles(string $sourceFolder, string $targetFolder, array $excludes = [])
+    private function recursiveScanDir(string $dir)
     {
-        $files = scandir($sourceFolder);
+        if ($dir[strlen($dir) - 1] == DS) $dir = substr($dir, 0, -1);
+        $scan = scandir($dir);
+        $files = [];
+        foreach ($scan as $file) {
+            if (in_array($file, ['.', '..'])) continue;
+            $file = $dir . DS . $file;
+            if (is_dir($file)) $files = array_merge($files, $this->recursiveScanDir($file));
+            else $files[] = $file;
+        }
+        return $files;
+    }
+
+    private function strStartsWith(string $str, $with)
+    {
+        if (!is_array($with)) $with = [$with];
+        foreach ($with as $w) {
+            if (substr($str, 0, strlen($w)) === $w) return true;
+        }
+        return false;
+    }
+
+    private function str_replace_first($from, $to, $content)
+    {
+        $from = '/' . preg_quote($from, '/') . '/';
+
+        return preg_replace($from, $to, $content, 1);
+    }
+
+    private function moveFolderFiles(string $sourceFolder, string $targetFolder, array $excludes = [], $includes = false)
+    {
+        //Se includes for true, os arquivos em excludes sao os unicos que devem ser movidos
+        $files = $this->recursiveScanDir($sourceFolder);
+        // var_dump($files);
         $excludes = array_merge($excludes, ['.', '..']);
-        foreach ($files as $file) {
-            if (in_array($file, $excludes)) continue;
-            if (!rename($sourceFolder . DS . $file, $targetFolder . DS . $file)) return false;
+        // var_dump($excludes);
+        foreach ($files as $fileDir) {
+            if ((!$includes && $this->strStartsWith($fileDir, $excludes)) || ($includes && !$this->strStartsWith($fileDir, $excludes))) continue;
+
+
+            $targetDir = $this->str_replace_first($sourceFolder, $targetFolder, $fileDir);
+            $x = explode(DS, $targetDir);
+            $newD = '';
+            for ($i = 0; $i < count($x) - 1; $i++) {
+                $newD .= ($newD != '' || $newD == '' && $x[0] == '' ? DS : '') . $x[$i];
+                if (!file_exists($newD)) mkdir($newD);
+            }
+
+            if (file_exists($fileDir) && !rename($fileDir, $targetDir)) return false;
         }
         return true;
     }
