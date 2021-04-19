@@ -1,6 +1,0 @@
-{
-  "repo": "user/repository",
-  "branch": "master",
-  "runComposer": true,
-  "updateOnly": true
-}

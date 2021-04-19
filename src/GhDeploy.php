@@ -23,6 +23,7 @@ class GhDeploy
     {
         $token = $_GET['token'] ?? NULL;
         if (!$token) die('Auth missing');
+        $this->setConfigs();
 
         $this->deployId = uniqid('deploy_');
         $this->token = $token;
@@ -32,11 +33,6 @@ class GhDeploy
         $projectPath = str_replace('/', DS, $projectPath);
         if ($projectPath[strlen($projectPath) - 1] == DS) $projectPath = substr($projectPath, 0, -1);
         $this->projectPath = $projectPath;
-        $this->setConfigs($projectPath . DS . 'ghConfig.json');
-
-        $this->getNewConfig();
-        $this->setConfigs($projectPath . DS . 'ghConfig.json');
-
 
         $zipPath = $projectPath . DS . $this->deployId . '.zip';
         $deployPath = $projectPath . DS . $this->deployId;
@@ -59,26 +55,46 @@ class GhDeploy
             shell_exec("cd \"$this->runComposer\" && composer install");
             shell_exec("cd \"$this->runComposer\" && composer update");
         }
-
-        $result = $this->updateOnly ? $this->update($projectPath, $this->deployId) : $this->clone($projectPath);
+        if ($this->updateOnly === true)  $this->update();
+        else $this->clone();
 
 
         die("Success!");
     }
 
-    private function setConfigs(string $configFile)
+    private function setConfigs()
     {
-        if (!file_exists($configFile)) die("Config file ('ghConfig.json'), not found in project path");
 
+        $content_type = $_REQUEST['content-type'] ?? NULL;
+        $input = file_get_contents('php://input');
 
-        $configArr = json_decode(file_get_contents($configFile), true);
-        extract($configArr);
+        $hook = [];
+        if ($input) {
+            if ($content_type == 'application/json') $hook = json_decode($input, true);
+            else parse_str($input, $hook);
+        }
+        $xRef = $input ? explode('/', $input['ref']) : NULL;
+        $hBranch = NULL;
+        if ($xRef) $hBranch = end($xRef);
+
+        $repo =  $input['repository']['full_name'] ?? $_GET['repo'] ?? NULL;
+        if (!$repo) die('Unrecognized $repo');
+        $branch = $_GET['branch'] ?? NULL;
+        if (!$branch) die('$branch not specified');
+
+        if ($input && $branch != $hBranch) {
+            //Chamada do webhook, o push foi em outra branch
+            die;
+        }
 
         if (strpos($repo, '://') !== false) die('$repo can\'t be a URL, use "user/repository" instead');
         if ($repo[0] == '/') $repo = substr($repo, 1);
         if ($repo[strlen($repo) - 1] == '/') $repo = substr($repo, 0, -1);
         $x = explode('/', $repo);
         if (count($x) > 2) die('Unrecognized $repo');
+        $updateOnly = ($_GET['update'] ?? false) ? true : false;
+        $runComposer = ($_GET['composer'] ?? false) ? true : false;
+
         $repoName = $x[1];
 
         $this->repo = $repo;
@@ -88,27 +104,9 @@ class GhDeploy
         $this->runComposer = $runComposer;
     }
 
-    private function getNewConfig()
-    {
-        $configFile = $this->projectPath . DS . 'ghConfig.json';
-        $bkpConfigFile = $this->projectPath . DS . 'ghConfig.json.' . $this->deployId;
-        if (file_exists($configFile)) rename($configFile, $bkpConfigFile);
-        $r = $this->request(
-            "https://raw.githubusercontent.com/{$this->repo}/{$this->branch}/ghConfig.json",
-            ["Authorization: token {$this->token}"],
-            NULL,
-            $configFile
-        );
-        if ($r['code'] >= 400) {
-            if (file_exists($bkpConfigFile)) rename($bkpConfigFile, $configFile);
-            die("Config file ('ghConfig.json'), not found in github repository");
-        }
-
-        if (file_exists($bkpConfigFile)) unlink($bkpConfigFile);
-    }
-
     private function clone()
     {
+        echo "Clone...<BR>";
         $deployPath = $this->projectPath . DS . $this->deployId;
         mkdir("$deployPath-bkp");
         if (!$this->moveFolderFiles(
@@ -126,6 +124,7 @@ class GhDeploy
 
     private function update()
     {
+        echo "Update...<BR>";
         $deployPath = $this->projectPath . DS . $this->deployId;
         mkdir("$deployPath-bkp");
         $replaceLista = $this->recursiveScanDir($deployPath);
@@ -169,15 +168,22 @@ class GhDeploy
         return preg_replace($from, $to, $content, 1);
     }
 
-    private function moveFolderFiles(string $sourceFolder, string $targetFolder, array $excludes = [], $includes = false)
+    private function moveFolderFiles(string $sourceFolder, string $targetFolder, array $excludes = [], bool $updateOnly = false)
     {
-        //Se includes for true, os arquivos em excludes sao os unicos que devem ser movidos
-        $files = $this->recursiveScanDir($sourceFolder);
-        // var_dump($files);
+        //Se updateOnly for true, os arquivos em excludes sao os unicos que devem ser movidos
+        $files = [];
         $excludes = array_merge($excludes, ['.', '..']);
-        // var_dump($excludes);
+        if ($sourceFolder[strlen($sourceFolder) - 1] == DS) $sourceFolder = substr($sourceFolder, 0, -1);
+        if ($updateOnly) {
+            $files = $this->recursiveScanDir($sourceFolder);
+        } else {
+            $fileScan = scandir($sourceFolder);
+            foreach ($fileScan as $f) {
+                if (!in_array($f, $excludes)) $files[] = $sourceFolder . DS . $f;
+            }
+        }
         foreach ($files as $fileDir) {
-            if ((!$includes && $this->strStartsWith($fileDir, $excludes)) || ($includes && !$this->strStartsWith($fileDir, $excludes))) continue;
+            if ((!$updateOnly && in_array($fileDir, $excludes)) || ($updateOnly && !$this->strStartsWith($fileDir, $excludes))) continue;
 
 
             $targetDir = $this->str_replace_first($sourceFolder, $targetFolder, $fileDir);
