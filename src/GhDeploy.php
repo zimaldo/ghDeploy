@@ -18,10 +18,14 @@ class GhDeploy
 
     /**
      * @param string $projectPath Current project path (to receive the files in specified branch)
+     * @param string $pass Password to aceppt deploy request
+     * @param bool $backup False to remove backup folder after deploy 
      */
-    public function __construct(string $projectPath)
+    public function __construct(string $projectPath, string $pass, bool $backup = true)
     {
         $token = $_GET['token'] ?? NULL;
+        $getPass = $_GET['pass'] ?? NULL;
+        if (!$pass || $getPass != $pass) die;
         if (!$token) die('Auth missing');
         $this->setConfigs();
 
@@ -31,7 +35,7 @@ class GhDeploy
         if (!file_exists($projectPath)) die("Project path '$projectPath' don't exists");
 
         $projectPath = str_replace('/', DS, $projectPath);
-        if ($projectPath[strlen($projectPath) - 1] == DS) $projectPath = substr($projectPath, 0, -1);
+        $projectPath = realpath($projectPath) ? realpath($projectPath) : $projectPath;
         $this->projectPath = $projectPath;
 
         $zipPath = $projectPath . DS . $this->deployId . '.zip';
@@ -57,6 +61,23 @@ class GhDeploy
         }
         if ($this->updateOnly === true)  $this->update();
         else $this->clone();
+
+        if (!$backup) {
+            $files = $this->recursiveScanDir("$deployPath-bkp");
+            $folders = [];
+            foreach ($files as $f) {
+                $x = explode(DS, $f);
+                unset($x[count($x) - 1]);
+                $folder = implode(DS, $x);
+                if (!in_array($folder, $folders)) $folders[] = $folder;
+                unlink($f);
+            }
+            $folders = array_reverse($folders);
+            foreach ($folders as $f) {
+                rmdir($f);
+            }
+            @rmdir("$deployPath-bkp");
+        }
 
 
         die("Success!");
@@ -182,8 +203,14 @@ class GhDeploy
                 if (!in_array($f, $excludes)) $files[] = $sourceFolder . DS . $f;
             }
         }
+        $folders = [];
         foreach ($files as $fileDir) {
             if ((!$updateOnly && in_array($fileDir, $excludes)) || ($updateOnly && !$this->strStartsWith($fileDir, $excludes))) continue;
+
+            $x = explode(DS, $fileDir);
+            unset($x[count($x) - 1]);
+            $folder = implode(DS, $x);
+            if (!in_array($folder, $folders) && $folder != $sourceFolder) $folders[] = $folder;
 
 
             $targetDir = $this->str_replace_first($sourceFolder, $targetFolder, $fileDir);
@@ -195,6 +222,10 @@ class GhDeploy
             }
 
             if (file_exists($fileDir) && !rename($fileDir, $targetDir)) return false;
+        }
+        $folders = array_reverse($folders);
+        foreach ($folders as $f) {
+            rmdir($f);
         }
         return true;
     }
