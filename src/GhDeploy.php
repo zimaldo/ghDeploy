@@ -88,21 +88,22 @@ class GhDeploy
     private function setConfigs()
     {
 
-        $content_type = $_REQUEST['content-type'] ?? NULL;
+        $content_type = $_SERVER['CONTENT_TYPE'] ?? NULL;
         $input = file_get_contents('php://input');
 
         $hook = [];
         if ($input) {
             if ($content_type == 'application/json') $hook = json_decode($input, true);
-            else parse_str($input, $hook);
+            else $hook = $_POST;
         }
-        $xRef = $input ? explode('/', $input['ref']) : NULL;
+        $xRef = $input ? explode('/', $hook['ref']) : NULL;
         $hBranch = NULL;
         if ($xRef) $hBranch = end($xRef);
 
-        $repo =  $input['repository']['full_name'] ?? $_GET['repo'] ?? NULL;
-        if (!$repo) die('Unrecognized $repo');
+        $repo =  $hook['repository']['full_name'] ?? $_GET['repo'] ?? NULL;
         $branch = $_GET['branch'] ?? NULL;
+
+        if (!$repo) die('Unrecognized $repo');
         if (!$branch) die('$branch not specified');
 
         if ($input && $branch != $hBranch) {
