@@ -53,7 +53,7 @@ class GhDeploy
         unlink($zipPath);
 
         rename("$deployPath-temp" . DS . "{$this->repoName}-{$this->branch}", $deployPath);
-        rmdir("$deployPath-temp");
+        $this->deleteAll("$deployPath-temp", true);
 
         if ($this->runComposer && file_exists($deployPath . DS . 'composer.json')) {
             shell_exec("cd \"$this->runComposer\" && composer install");
@@ -63,24 +63,26 @@ class GhDeploy
         else $this->clone();
 
         if (!$backup) {
-            $files = $this->recursiveScanDir("$deployPath-bkp");
-            $folders = [];
-            foreach ($files as $f) {
-                $x = explode(DS, $f);
-                unset($x[count($x) - 1]);
-                $folder = implode(DS, $x);
-                if (!in_array($folder, $folders)) $folders[] = $folder;
-                unlink($f);
-            }
-            $folders = array_reverse($folders);
-            foreach ($folders as $f) {
-                rmdir($f);
-            }
-            @rmdir("$deployPath-bkp");
+            $this->deleteAll("$deployPath-bkp", true);
         }
 
 
         die("Success!");
+    }
+
+    private function deleteAll($dir, $remove = false)
+    {
+        $structure = glob(rtrim($dir, "/") . '/{,.}[!.,!..]*', GLOB_MARK | GLOB_BRACE);
+        if (is_array($structure)) {
+            foreach ($structure as $file) {
+                if (is_dir($file))
+                    $this->deleteAll($file, true);
+                else if (is_file($file))
+                    unlink($file);
+            }
+        }
+        if ($remove)
+            rmdir($dir);
     }
 
     private function setConfigs()
@@ -139,7 +141,7 @@ class GhDeploy
             ]
         )) die("Error moving project files to backup");
         if (!$this->moveFolderFiles($deployPath, $this->projectPath)) die("Error moving deployed files to project");
-        rmdir($deployPath);
+        $this->deleteAll($deployPath, true);
         return true;
     }
 
@@ -148,14 +150,14 @@ class GhDeploy
         echo "Update...<BR>";
         $deployPath = $this->projectPath . DS . $this->deployId;
         mkdir("$deployPath-bkp");
-        $replaceLista = $this->recursiveScanDir($deployPath);
+        $listaDeploy = $this->recursiveScanDir($deployPath);
         $lista = [];
-        foreach ($replaceLista as $val) {
+        foreach ($listaDeploy as $val) {
             $lista[] = $this->str_replace_first($deployPath, $this->projectPath, $val);
         }
         if (!$this->moveFolderFiles($this->projectPath, "$deployPath-bkp", $lista, true)) die("Error moving project files to backup");
-        if (!$this->moveFolderFiles($deployPath, $this->projectPath)) die("Error moving deployed files to project");
-        rmdir($deployPath);
+        if (!$this->moveFolderFiles($deployPath, $this->projectPath, $listaDeploy, true)) die("Error moving deployed files to project");
+        $this->deleteAll($deployPath, true);
         return true;
     }
 
@@ -221,7 +223,16 @@ class GhDeploy
                 if (!file_exists($newD)) mkdir($newD);
             }
 
-            if (file_exists($fileDir) && !rename($fileDir, $targetDir)) return false;
+            if (file_exists($fileDir)) {
+                if (file_exists($targetDir) && !unlink($targetDir)) {
+                    echo "Error removing old existing file $targetDir";
+                    return false;
+                }
+                if (!rename($fileDir, $targetDir)) {
+                    echo "Error moving $fileDir to $targetDir<BR>";
+                    return false;
+                }
+            }
         }
         $folders = array_reverse($folders);
         foreach ($folders as $f) {
